@@ -10,6 +10,8 @@ from easydict import EasyDict as edict
 from torchvision import transforms as T
 from torchvision.models.detection import fasterrcnn_resnet50_fpn
 from tqdm import tqdm
+from scipy.spatial.transform import Rotation
+
 
 from hybrik.models import builder
 from hybrik.utils.config import update_config
@@ -17,6 +19,7 @@ from hybrik.utils.presets import SimpleTransform3DSMPLCam
 from hybrik.utils.render_pytorch3d import render_mesh
 from hybrik.utils.vis import get_max_iou_box, get_one_box, vis_2d
 import time
+import open3d as o3d
 det_transform = T.Compose([T.ToTensor()])
 
 
@@ -218,6 +221,14 @@ def main():
     uv_29s = []
     transls = []
 
+    vis = o3d.visualization.Visualizer()
+    vis.create_window(width=1920, height=1080)
+    mesh = o3d.geometry.TriangleMesh()
+
+    # load 
+    param = None
+
+    idx = 0
     for img_path in tqdm(img_path_list):
     # for it in range(100):
     #     img_path = '/home/nardi/ultrasound_ws/src/motion_planner/motion_planner/rs.jpg'
@@ -260,12 +271,64 @@ def main():
         uv_29s.append(uv_29)
         transls.append(transl)
 
-    # render result
-    print('### Render Result...')
-    for i in tqdm(range(len(input_images))):
-        render_result(input_images[i], bboxs[i], pose_outputs[i], uv_29s[i], smpl_faces, transls[i], i, opt, write_stream, write2d_stream, res_db, img_path, tight_bbox, pose_input)
-    write_stream.release()
-    write2d_stream.release()
+
+        # VISUALIZE
+        vertices = pose_output.pred_vertices.detach()
+        translation = transls[-1]
+        faces = smpl_faces
+        vertices = vertices + translation[:, None, :]
+        # convert to o3d
+        vertices = vertices[0].cpu().numpy()
+        mesh.vertices = o3d.utility.Vector3dVector(vertices)
+        mesh.triangles = o3d.utility.Vector3iVector(faces)
+        # default rot -> 180 deg around z axis
+        rot = Rotation.from_euler('x', 180, degrees=True).as_matrix().astype(np.float32)
+        # convert to 4x4
+        rot = np.hstack((rot, np.zeros((3, 1))))
+        rot = np.vstack((rot, np.array([0, 0, 0, 1])))
+        mesh = mesh.transform(rot)
+        vis.clear_geometries()
+        vis.add_geometry(mesh)
+        # vis.update_geometry(mesh)
+        vis.poll_events()
+        vis.update_renderer()
+        if idx == 0:
+            param = vis.get_view_control().convert_to_pinhole_camera_parameters()
+            o3d.io.write_pinhole_camera_parameters("camera_param.json", param)
+        else:
+            vis.get_view_control().convert_from_pinhole_camera_parameters(param, allow_arbitrary=True)
+        idx += 1
+    # # instantiate visualizer
+    # vis = o3d.visualization.Visualizer()
+    # vis.create_window()
+    # # default rot -> 180 deg around z axis
+    # rot = Rotation.from_euler('x', 180, degrees=True).as_matrix().astype(np.float32)
+    # # convert to 4x4
+    # rot = np.hstack((rot, np.zeros((3, 1))))
+    # rot = np.vstack((rot, np.array([0, 0, 0, 1])))
+    # # render result
+    # print('### Render Result...')
+    # for i in tqdm(range(len(input_images))):
+    #     # render_result(input_images[i], bboxs[i], pose_outputs[i], uv_29s[i], smpl_faces, transls[i], i, opt, write_stream, write2d_stream, res_db, img_path, tight_bbox, pose_input)
+    #     render_o3d(pose_output.pred_vertices.detach(), smpl_faces, transls[i],rot, vis)
+    #     time.sleep(1.0)
+    # write_stream.release()
+    # write2d_stream.release()
+
+
+def render_o3d(vertices, faces, translation, rot, vis):
+    vertices = vertices + translation[:, None, :]
+    mesh = o3d.geometry.TriangleMesh()
+    # convert to o3d
+    vertices = vertices[0].cpu().numpy()
+    mesh.vertices = o3d.utility.Vector3dVector(vertices)
+    mesh.triangles = o3d.utility.Vector3iVector(faces)
+    mesh = mesh.transform(rot)
+    vis.clear_geometries()
+    vis.add_geometry(mesh)
+    # vis.update_geometry(mesh)
+    vis.poll_events()
+    vis.update_renderer()
 
 
 def render_result(input_image, bbox, pose_output, uv_29, smpl_faces, transl, idx, opt, write_stream, write2d_stream, res_db, img_path, tight_bbox, pose_input):
