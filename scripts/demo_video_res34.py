@@ -20,16 +20,6 @@ import time
 det_transform = T.Compose([T.ToTensor()])
 
 
-##############################
-# ros2 grab image
-import importlib.util
-import sys
-spec = importlib.util.spec_from_file_location("recorder", "/home/nardi/ultrasound_ws/src/motion_planner/motion_planner/recorder.py")
-ros2_sub = importlib.util.module_from_spec(spec)
-sys.modules["recorder"] = ros2_sub
-spec.loader.exec_module(ros2_sub)
-##############################
-
 def xyxy2xywh(bbox):
     x1, y1, x2, y2 = bbox
 
@@ -228,9 +218,9 @@ def main():
     uv_29s = []
     transls = []
 
-    # for img_path in tqdm(img_path_list):
-    for it in range(100):
-        img_path = '/home/nardi/ultrasound_ws/src/motion_planner/motion_planner/rs.jpg'
+    for img_path in tqdm(img_path_list):
+    # for it in range(100):
+    #     img_path = '/home/nardi/ultrasound_ws/src/motion_planner/motion_planner/rs.jpg'
 
         dirname = os.path.dirname(img_path)
         basename = os.path.basename(img_path)
@@ -383,7 +373,6 @@ def render_result(input_image, bbox, pose_output, uv_29, smpl_faces, transl, idx
 
         with open(os.path.join(opt.out_dir, 'res.pk'), 'wb') as fid:
             pk.dump(res_db, fid)
-    print("#4 --- %s seconds ---" % (time.time() - start_time))
     # write_stream.release()
     # write2d_stream.release()
 
