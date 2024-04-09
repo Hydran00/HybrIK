@@ -7,18 +7,18 @@ import pickle as pk
 import cv2
 import numpy as np
 import torch
-from easydict import EasyDict as edict
+# from easydict import EasyDict as edict
 from torchvision import transforms as T
 from torchvision.models.detection import fasterrcnn_resnet50_fpn
 from tqdm import tqdm
 from scipy.spatial.transform import Rotation
 
 
-from hybrik.models import builder
-from hybrik.utils.config import update_config
-from hybrik.utils.presets import SimpleTransform3DSMPLCam
-from hybrik.utils.render_pytorch3d import render_mesh
-from hybrik.utils.vis import get_max_iou_box, get_one_box, vis_2d
+from .hybrik.models import builder
+from .hybrik.utils.config import update_config
+from .hybrik.utils.presets import SimpleTransform3DSMPLCam
+from .hybrik.utils.render_pytorch3d import render_mesh
+from .hybrik.utils.vis import get_max_iou_box, get_one_box, vis_2d
 import time
 import open3d as o3d
 
@@ -108,7 +108,7 @@ def main():
 
     bbox_3d_shape = getattr(cfg.MODEL, 'BBOX_3D_SHAPE', (2000, 2000, 2000))
     bbox_3d_shape = [item * 1e-3 for item in bbox_3d_shape]
-    dummpy_set = edict({
+    dummpy_set = ({
         'joint_pairs_17': None,
         'joint_pairs_24': None,
         'joint_pairs_29': None,
