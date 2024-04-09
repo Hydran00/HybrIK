@@ -21,7 +21,6 @@ from hybrik.utils.vis import get_max_iou_box, get_one_box, vis_2d
 import time
 import open3d as o3d
 
-
 import zmq 
 
 det_transform = T.Compose([T.ToTensor()])
@@ -37,78 +36,20 @@ def xyxy2xywh(bbox):
     return [cx, cy, w, h]
 
 
-def get_video_info(in_file):
-    stream = cv2.VideoCapture(in_file)
-    assert stream.isOpened(), 'Cannot capture source'
-    # self.path = input_source
-    datalen = int(stream.get(cv2.CAP_PROP_FRAME_COUNT))
-    fourcc = int(stream.get(cv2.CAP_PROP_FOURCC))
-    fps = stream.get(cv2.CAP_PROP_FPS)
-    frameSize = (int(stream.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                 int(stream.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-    # bitrate = int(stream.get(cv2.CAP_PROP_BITRATE))
-    videoinfo = {'fourcc': fourcc, 'fps': fps, 'frameSize': frameSize}
-    stream.release()
-
-    return stream, videoinfo, datalen
-
-
-def recognize_video_ext(ext=''):
-    if ext == 'mp4':
-        return cv2.VideoWriter_fourcc(*'mp4v'), '.' + ext
-    elif ext == 'avi':
-        return cv2.VideoWriter_fourcc(*'XVID'), '.' + ext
-    elif ext == 'mov':
-        return cv2.VideoWriter_fourcc(*'XVID'), '.' + ext
-    else:
-        print("Unknow video format {}, will use .mp4 instead of it".format(ext))
-        return cv2.VideoWriter_fourcc(*'mp4v'), '.mp4'
 
 context = zmq.Context()
 subscriber_socket = context.socket(zmq.PULL)
-# subscriber_socket.setsockopt(zmq.SUBSCRIBE, '')
 subscriber_socket.setsockopt(zmq.CONFLATE, 1)
 subscriber_socket.connect("tcp://localhost:5555")
 
 def receive_image():
     encoded_img = subscriber_socket.recv()
     img = cv2.imdecode(np.frombuffer(encoded_img, np.uint8), cv2.IMREAD_COLOR)
-    # cv2.imshow("Received Image", img)
-    # cv2.waitKey(1)
-    # cv2.destroyAllWindows()
     return img
     
 
 def main():
-    parser = argparse.ArgumentParser(description='HybrIK Demo')
 
-    parser.add_argument('--gpu',
-                        help='gpu',
-                        default=0,
-                        type=int)
-    # parser.add_argument('--img-path',
-    #                     help='image name',
-    #                     default='',
-    #                     type=str)
-    parser.add_argument('--video-name',
-                        help='video name',
-                        default='',
-                        type=str)
-    parser.add_argument('--out-dir',
-                        help='output folder',
-                        default='',
-                        type=str)
-    parser.add_argument('--save-pk', default=False, dest='save_pk',
-                        help='save prediction', action='store_true')
-    parser.add_argument('--save-img', default=False, dest='save_img',
-                        help='save prediction', action='store_true')
-
-
-    opt = parser.parse_args()
-
-
-    # cfg_file = 'configs/256x192_adam_lr1e-3-hrw48_cam_2x_w_pw3d_3dhp.yaml'
-    # cfg_file='configs/256x192_adam_lr1e-3-res34_smpl_3d_cam_2x_mix_w_pw3d.yaml'
     cfg_file = 'configs/256x192_adam_lr1e-3-hrw48_cam_2x_w_pw3d_3dhp.yaml'
     CKPT = './pretrained_models/smpl_best.pth'
     cfg = update_config(cfg_file)
@@ -168,64 +109,12 @@ def main():
     else:
         hybrik_model.load_state_dict(save_dict)
 
-    det_model.cuda(opt.gpu)
-    hybrik_model.cuda(opt.gpu)
+    det_model.cuda(0)
+    hybrik_model.cuda(0)
     det_model.eval()
     hybrik_model.eval()
 
     print('### Extract Image...')
-    video_basename = os.path.basename(opt.video_name).split('.')[0]
-
-    if not os.path.exists(opt.out_dir):
-        os.makedirs(opt.out_dir)
-    if not os.path.exists(os.path.join(opt.out_dir, 'raw_images')):
-        os.makedirs(os.path.join(opt.out_dir, 'raw_images'))
-    if not os.path.exists(os.path.join(opt.out_dir, 'res_images')) and opt.save_img:
-        os.makedirs(os.path.join(opt.out_dir, 'res_images'))
-    if not os.path.exists(os.path.join(opt.out_dir, 'res_2d_images')) and opt.save_img:
-        os.makedirs(os.path.join(opt.out_dir, 'res_2d_images'))
-
-    _, info, _ = get_video_info(opt.video_name)
-    video_basename = os.path.basename(opt.video_name).split('.')[0]
-
-    savepath = f'./{opt.out_dir}/res_{video_basename}.mp4'
-    savepath2d = f'./{opt.out_dir}/res_2d_{video_basename}.mp4'
-    info['savepath'] = savepath
-    info['savepath2d'] = savepath2d
-
-    write_stream = cv2.VideoWriter(
-        *[info[k] for k in ['savepath', 'fourcc', 'fps', 'frameSize']])
-    write2d_stream = cv2.VideoWriter(
-        *[info[k] for k in ['savepath2d', 'fourcc', 'fps', 'frameSize']])
-    if not write_stream.isOpened():
-        print("Try to use other video encoders...")
-        ext = info['savepath'].split('.')[-1]
-        fourcc, _ext = recognize_video_ext(ext)
-        info['fourcc'] = fourcc
-        info['savepath'] = info['savepath'][:-4] + _ext
-        info['savepath2d'] = info['savepath2d'][:-4] + _ext
-        write_stream = cv2.VideoWriter(
-            *[info[k] for k in ['savepath', 'fourcc', 'fps', 'frameSize']])
-        write2d_stream = cv2.VideoWriter(
-            *[info[k] for k in ['savepath2d', 'fourcc', 'fps', 'frameSize']])
-
-    assert write_stream.isOpened(), 'Cannot open video for writing'
-    assert write2d_stream.isOpened(), 'Cannot open video for writing'
-
-    os.system(f'ffmpeg -i {opt.video_name} {opt.out_dir}/raw_images/{video_basename}-%06d.png')
-
-
-    files = os.listdir(f'{opt.out_dir}/raw_images')
-    files.sort()
-
-    img_path_list = []
-
-    for file in tqdm(files):
-        if not os.path.isdir(file) and file[-4:] in ['.jpg', '.png']:
-
-            img_path = os.path.join(opt.out_dir, 'raw_images', file)
-            img_path_list.append(img_path)
-
     prev_box = None
     renderer = None
     smpl_faces = torch.from_numpy(hybrik_model.smpl.faces.astype(np.int32))
@@ -241,24 +130,18 @@ def main():
     vis = o3d.visualization.Visualizer()
     vis.create_window(width=1920, height=1080)
     mesh = o3d.geometry.TriangleMesh()
-
-    # load 
     param = None
 
     idx = 0
-    # for img_path in tqdm(img_path_list):
-    for it in range(100000):
-        input_image = receive_image()
-        print("Received Image")
-        # img_path = '/home/nardi/ultrasound_ws/src/motion_planner/motion_planner/rs.jpg'
 
-        # dirname = os.path.dirname(img_path)
-        # basename = os.path.basename(img_path)
+    for _ in range(100000):
+        input_image = receive_image()
+        # print("Received Image")
 
         with torch.no_grad():
             # Run Detection
             # input_image = cv2.cvtColor(cv2.imread(img_path), cv2.COLOR_BGR2RGB)
-            det_input = det_transform(input_image).to(opt.gpu)
+            det_input = det_transform(input_image).to(0)
             det_output = det_model([det_input])[0]
 
             if prev_box is None:
@@ -274,7 +157,7 @@ def main():
             # bbox: [x1, y1, x2, y2]
             pose_input, bbox, img_center = transformation.test_transform(
                 input_image, tight_bbox)
-            pose_input = pose_input.to(opt.gpu)[None, :, :, :]
+            pose_input = pose_input.to(0)[None, :, :, :]
             pose_output = hybrik_model(
                 pose_input, flip_test=True,
                 bboxes=torch.from_numpy(np.array(bbox)).to(pose_input.device).unsqueeze(0).float(),
@@ -318,23 +201,6 @@ def main():
         vis.poll_events()
         vis.update_renderer()
         idx += 1
-    # # instantiate visualizer
-    # vis = o3d.visualization.Visualizer()
-    # vis.create_window()
-    # # default rot -> 180 deg around z axis
-    # rot = Rotation.from_euler('x', 180, degrees=True).as_matrix().astype(np.float32)
-    # # convert to 4x4
-    # rot = np.hstack((rot, np.zeros((3, 1))))
-    # rot = np.vstack((rot, np.array([0, 0, 0, 1])))
-    # # render result
-    # print('### Render Result...')
-    # for i in tqdm(range(len(input_images))):
-    #     # render_result(input_images[i], bboxs[i], pose_outputs[i], uv_29s[i], smpl_faces, transls[i], i, opt, write_stream, write2d_stream, res_db, img_path, tight_bbox, pose_input)
-    #     render_o3d(pose_output.pred_vertices.detach(), smpl_faces, transls[i],rot, vis)
-    #     time.sleep(1.0)
-    # write_stream.release()
-    # write2d_stream.release()
-
 
 def render_o3d(vertices, faces, translation, rot, vis):
     vertices = vertices + translation[:, None, :]
