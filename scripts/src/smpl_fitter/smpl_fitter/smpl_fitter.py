@@ -1,3 +1,5 @@
+
+#!/usr/bin/env python3
 """Image demo script."""
 import argparse
 import os
@@ -7,21 +9,20 @@ import pickle as pk
 import cv2
 import numpy as np
 import torch
-# from easydict import EasyDict as edict
+from easydict import EasyDict as edict
 from torchvision import transforms as T
 from torchvision.models.detection import fasterrcnn_resnet50_fpn
 from tqdm import tqdm
 from scipy.spatial.transform import Rotation
-
-
-from .hybrik.models import builder
-from .hybrik.utils.config import update_config
-from .hybrik.utils.presets import SimpleTransform3DSMPLCam
-from .hybrik.utils.render_pytorch3d import render_mesh
-from .hybrik.utils.vis import get_max_iou_box, get_one_box, vis_2d
+# print current working directory
+print(os.getcwd())
+from hybrik.models import builder
+from hybrik.utils.config import update_config
+from hybrik.utils.presets import SimpleTransform3DSMPLCam
+from hybrik.utils.render_pytorch3d import render_mesh
+from hybrik.utils.vis import get_max_iou_box, get_one_box, vis_2d
 import time
 import open3d as o3d
-
 
 # ROS2
 # os.chdir("/home/nardi/HybrIK/scripts/src/smpl_fitter/smpl_fitter/")
