@@ -13,6 +13,9 @@ from tqdm import tqdm
 from scipy.spatial.transform import Rotation
 
 
+from pytorch3d import transforms
+import smplx
+
 from hybrik.models import builder
 from hybrik.utils.config import update_config
 from hybrik.utils.presets import SimpleTransform3DSMPLCam
@@ -21,7 +24,7 @@ from hybrik.utils.vis import get_max_iou_box, get_one_box, vis_2d
 import time
 import open3d as o3d
 
-import zmq 
+import imagezmq
 
 det_transform = T.Compose([T.ToTensor()])
 
@@ -37,16 +40,25 @@ def xyxy2xywh(bbox):
 
 
 
-context = zmq.Context()
-subscriber_socket = context.socket(zmq.PULL)
-subscriber_socket.setsockopt(zmq.CONFLATE, 1)
-subscriber_socket.connect("tcp://localhost:5555")
+# context = zmq.Context()
+# subscriber_socket = context.socket(zmq.PULL)
+# subscriber_socket.setsockopt(zmq.CONFLATE, 1)
+# subscriber_socket.connect("tcp://localhost:5555")
+
+# def receive_image():
+#     encoded_img = subscriber_socket.recv()
+#     img = cv2.imdecode(np.frombuffer(encoded_img, np.uint8), cv2.IMREAD_COLOR)
+#     return img
+    
+import imagezmq
+image_hub = imagezmq.ImageHub()
 
 def receive_image():
-    encoded_img = subscriber_socket.recv()
-    img = cv2.imdecode(np.frombuffer(encoded_img, np.uint8), cv2.IMREAD_COLOR)
-    return img
-    
+    hostname, image = image_hub.recv_image()
+    cv2.imshow(hostname, image)
+    cv2.waitKey(1)
+    image_hub.send_reply(b'OK')
+
 
 def main():
 
@@ -134,6 +146,10 @@ def main():
 
     idx = 0
 
+    JNTS = 29
+    # create random series of JNTS colors
+    colors = np.random.rand(JNTS, 3)
+
     for _ in range(100000):
         input_image = receive_image()
         # print("Received Image")
@@ -173,8 +189,10 @@ def main():
         uv_29s.append(uv_29)
         transls.append(transl)
 
-
+        # SAVE DB
+        store_result(pose_output, uv_29, transl, transl, bbox, res_db, False, 'out_dir', idx, input_image, pose_input, None)
         # VISUALIZE
+        vis.clear_geometries()
         vertices = pose_output.pred_vertices.detach()
         translation = transls[-1]
         faces = smpl_faces
@@ -185,39 +203,69 @@ def main():
         mesh.triangles = o3d.utility.Vector3iVector(faces)
         # default rot -> 180 deg around z axis
         rot = Rotation.from_euler('x', 180, degrees=True).as_matrix().astype(np.float32)
-        # convert to 4x4
-        rot = np.hstack((rot, np.zeros((3, 1))))
-        rot = np.vstack((rot, np.array([0, 0, 0, 1])))
-        mesh = mesh.transform(rot)
+
+        # mesh = mesh.rotate(rot)
         # if idx == 0:
         #     param = vis.get_view_control().convert_to_pinhole_camera_parameters()
         #     o3d.io.write_pinhole_camera_parameters("camera_param.json", param)
         # else:
         #     vis.get_view_control().convert_from_pinhole_camera_parameters(param, allow_arbitrary=True)
-        vis.clear_geometries()
+
+        # create 3d marker for joints
+        joints = pose_output.pred_xyz_jts_29[0].cpu().numpy().reshape(JNTS, 3)
+        print("SHAPE TRANS=", translation.shape)
+        joints = joints + translation.cpu().numpy()
+
+        coord = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1)
+        vis.add_geometry(coord)
+        print("SHAPE=", joints.shape)
+        for i in range(JNTS):
+            sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
+            sphere.compute_vertex_normals()
+            # sphere.paint_uniform_color(colors[i])
+            sphere.paint_uniform_color([1, 0, 0])
+
+            # sphere.rotate(rot, center=joints[i])
+            sphere.translate(joints[i])
+            vis.add_geometry(sphere)
+
+        joints = pose_output.pred_xyz_jts_24[0].cpu().numpy().reshape(24, 3)
+        print("SHAPE TRANS=", translation.shape)
+        joints = joints + translation.cpu().numpy()
+
+        coord = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1)
+        vis.add_geometry(coord)
+        print("SHAPE=", joints.shape)
+        for i in range(24):
+            sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
+            sphere.compute_vertex_normals()
+            # sphere.paint_uniform_color(colors[i])
+            sphere.paint_uniform_color([0, 1, 0])
+
+            # sphere.rotate(rot, center=joints[i])
+            sphere.translate(joints[i])
+            vis.add_geometry(sphere)
+
         mesh.compute_vertex_normals()
         vis.add_geometry(mesh)
         # vis.update_geometry(mesh)
         vis.poll_events()
         vis.update_renderer()
+        vis.run()
         idx += 1
 
-def render_o3d(vertices, faces, translation, rot, vis):
-    vertices = vertices + translation[:, None, :]
-    mesh = o3d.geometry.TriangleMesh()
-    # convert to o3d
-    vertices = vertices[0].cpu().numpy()
-    mesh.vertices = o3d.utility.Vector3dVector(vertices)
-    mesh.triangles = o3d.utility.Vector3iVector(faces)
-    mesh = mesh.transform(rot)
-    vis.clear_geometries()
-    vis.add_geometry(mesh)
-    # vis.update_geometry(mesh)
-    vis.poll_events()
-    vis.update_renderer()
+        # recreate mesh from params
+        aa = transforms.matrix_to_axis_angle(pose_output.pred_theta_mats.reshape(-1, 3, 3))
+        global_orient = aa[:3].unsqueeze(0)
+        body_pose = aa[3:].unsqueeze(0)
+        model_n = smplx.create("model_files/basicModel_neutral_lbs_10_207_0_v1.0.0.pkl", model_type="smpl", gender="neutral")
+        output_n = model_n(betas=pose_output.pred_shape.detach().cpu(), global_orient=global_orient.detach().cpu(), body_pose=body_pose.detach().cpu(), transl=pose_output.transl.detach().cpu())
+
+        joints = output_n.joints[0, :24, :]
+        joints = joints.detach().cpu().numpy()
 
 
-def render_result(input_image, bbox, pose_output, uv_29, smpl_faces, transl, idx, opt, write_stream, write2d_stream, res_db, img_path, tight_bbox, pose_input):
+def render_result_on_image(input_image, bbox, pose_output, uv_29, smpl_faces, transl, idx, opt, write_stream, write2d_stream, res_db, img_path, tight_bbox, pose_input):
     # Visualization
     start_time = time.time()
     image = input_image.copy()
@@ -265,63 +313,66 @@ def render_result(input_image, bbox, pose_output, uv_29, smpl_faces, transl, idx
     bbox_img = cv2.cvtColor(bbox_img, cv2.COLOR_RGB2BGR)
     write2d_stream.write(bbox_img)
 
-    if opt.save_img:
+def store_result(pose_output, uv_29, transl, transl_camsys, bbox, res_db, save_img, out_dir, idx, input_image, pose_input, bbox_img):
+    if save_img:
         res_path = os.path.join(
-            opt.out_dir, 'res_2d_images', f'image-{idx:06d}.jpg')
+            out_dir, 'res_2d_images', f'image-{idx:06d}.jpg')
         cv2.imwrite(res_path, bbox_img)
 
-    if opt.save_pk:
-        assert pose_input.shape[0] == 1, 'Only support single batch inference for now'
 
-        pred_xyz_jts_17 = pose_output.pred_xyz_jts_17.reshape(
-            17, 3).cpu().data.numpy()
-        pred_uvd_jts = pose_output.pred_uvd_jts.reshape(
-            -1, 3).cpu().data.numpy()
-        pred_xyz_jts_29 = pose_output.pred_xyz_jts_29.reshape(
-            -1, 3).cpu().data.numpy()
-        pred_xyz_jts_24_struct = pose_output.pred_xyz_jts_24_struct.reshape(
-            24, 3).cpu().data.numpy()
-        pred_scores = pose_output.maxvals.cpu(
-        ).data[:, :29].reshape(29).numpy()
-        pred_camera = pose_output.pred_camera.squeeze(
-            dim=0).cpu().data.numpy()
-        pred_betas = pose_output.pred_shape.squeeze(
-            dim=0).cpu().data.numpy()
-        pred_theta = pose_output.pred_theta_mats.squeeze(
-            dim=0).cpu().data.numpy()
-        pred_phi = pose_output.pred_phi.squeeze(dim=0).cpu().data.numpy()
-        pred_cam_root = pose_output.cam_root.squeeze(dim=0).cpu().numpy()
-        img_size = np.array((input_image.shape[0], input_image.shape[1]))
+    assert pose_input.shape[0] == 1, 'Only support single batch inference for now'
 
-        res_db['pred_xyz_17'].append(pred_xyz_jts_17)
-        res_db['pred_uvd'].append(pred_uvd_jts)
-        res_db['pred_xyz_29'].append(pred_xyz_jts_29)
-        res_db['pred_xyz_24_struct'].append(pred_xyz_jts_24_struct)
-        res_db['pred_scores'].append(pred_scores)
-        res_db['pred_camera'].append(pred_camera)
-        # res_db['f'].append(1000.0)
-        res_db['pred_betas'].append(pred_betas)
-        res_db['pred_thetas'].append(pred_theta)
-        res_db['pred_phi'].append(pred_phi)
-        res_db['pred_cam_root'].append(pred_cam_root)
-        # res_db['features'].append(img_feat)
-        res_db['transl'].append(transl[0].cpu().data.numpy())
-        res_db['transl_camsys'].append(transl_camsys[0].cpu().data.numpy())
-        res_db['bbox'].append(np.array(bbox))
-        res_db['height'].append(img_size[0])
-        res_db['width'].append(img_size[1])
-        res_db['img_path'].append(img_path)
+    pred_xyz_jts_17 = pose_output.pred_xyz_jts_17.reshape(
+        17, 3).cpu().data.numpy()
+    pred_uvd_jts = pose_output.pred_uvd_jts.reshape(
+        -1, 3).cpu().data.numpy()
+    pred_xyz_jts_29 = pose_output.pred_xyz_jts_29.reshape(
+        -1, 3).cpu().data.numpy()
+    pred_xyz_jts_24_struct = pose_output.pred_xyz_jts_24_struct.reshape(
+        24, 3).cpu().data.numpy()
+    pred_scores = pose_output.maxvals.cpu(
+    ).data[:, :29].reshape(29).numpy()
+    pred_camera = pose_output.pred_camera.squeeze(
+        dim=0).cpu().data.numpy()
+    pred_betas = pose_output.pred_shape.squeeze(
+        dim=0).cpu().data.numpy()
+    pred_theta = pose_output.pred_theta_mats.squeeze(
+        dim=0).cpu().data.numpy()
+    pred_phi = pose_output.pred_phi.squeeze(dim=0).cpu().data.numpy()
+    pred_cam_root = pose_output.cam_root.squeeze(dim=0).cpu().numpy()
+    img_size = np.array((input_image.shape[0], input_image.shape[1]))
 
+    res_db['pred_xyz_17'].append(pred_xyz_jts_17)
+    res_db['pred_uvd'].append(pred_uvd_jts)
+    res_db['pred_xyz_29'].append(pred_xyz_jts_29)
+    # JOINTS
+    res_db['pred_xyz_24_struct'].append(pred_xyz_jts_24_struct)
+    res_db['pred_scores'].append(pred_scores)
+    res_db['pred_camera'].append(pred_camera)
+    # res_db['f'].append(1000.0)
+    res_db['pred_betas'].append(pred_betas)
+    res_db['pred_thetas'].append(pred_theta)
+    res_db['pred_phi'].append(pred_phi)
+    res_db['pred_cam_root'].append(pred_cam_root)
+    # res_db['features'].append(img_feat)
+    res_db['transl'].append(transl[0].cpu().data.numpy())
+    res_db['transl_camsys'].append(transl_camsys[0].cpu().data.numpy())
+    res_db['bbox'].append(np.array(bbox))
+    res_db['height'].append(img_size[0])
+    res_db['width'].append(img_size[1])
+    # res_db['img_path'].append(img_path)
 
-    if opt.save_pk:
-        n_frames = len(res_db['img_path'])
-        for k in res_db.keys():
-            print(k)
-            res_db[k] = np.stack(res_db[k])
-            assert res_db[k].shape[0] == n_frames
+    # print("IDX=", idx)
+    # print(res_db)
 
-        with open(os.path.join(opt.out_dir, 'res.pk'), 'wb') as fid:
-            pk.dump(res_db, fid)
+    # n_frames = idx + 1 #len(res_db['img_path'])
+    # for k in res_db.keys():
+    #     # print(k)
+    #     res_db[k] = np.stack(res_db[k])
+    #     assert res_db[k].shape[0] == n_frames
+    # with open(os.path.join(out_dir, 'res.pk'), 'wb') as fid:
+    #     pk.dump(res_db, fid)
+
     # write_stream.release()
     # write2d_stream.release()
 
