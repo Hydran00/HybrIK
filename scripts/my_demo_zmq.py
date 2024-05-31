@@ -55,10 +55,12 @@ image_hub = imagezmq.ImageHub()
 
 def receive_image():
     hostname, image = image_hub.recv_image()
+    print("Hostname=", hostname)
     cv2.imshow(hostname, image)
     cv2.waitKey(1)
     image_hub.send_reply(b'OK')
-
+    print("Received Image")
+    return image
 
 def main():
 
@@ -157,6 +159,7 @@ def main():
         with torch.no_grad():
             # Run Detection
             # input_image = cv2.cvtColor(cv2.imread(img_path), cv2.COLOR_BGR2RGB)
+            
             det_input = det_transform(input_image).to(0)
             det_output = det_model([det_input])[0]
 
@@ -218,7 +221,6 @@ def main():
 
         coord = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1)
         vis.add_geometry(coord)
-        print("SHAPE=", joints.shape)
         for i in range(JNTS):
             sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
             sphere.compute_vertex_normals()
@@ -230,12 +232,10 @@ def main():
             vis.add_geometry(sphere)
 
         joints = pose_output.pred_xyz_jts_24[0].cpu().numpy().reshape(24, 3)
-        print("SHAPE TRANS=", translation.shape)
         joints = joints + translation.cpu().numpy()
 
         coord = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1)
         vis.add_geometry(coord)
-        print("SHAPE=", joints.shape)
         for i in range(24):
             sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
             sphere.compute_vertex_normals()
@@ -258,11 +258,13 @@ def main():
         aa = transforms.matrix_to_axis_angle(pose_output.pred_theta_mats.reshape(-1, 3, 3))
         global_orient = aa[:3].unsqueeze(0)
         body_pose = aa[3:].unsqueeze(0)
-        model_n = smplx.create("model_files/basicModel_neutral_lbs_10_207_0_v1.0.0.pkl", model_type="smpl", gender="neutral")
-        output_n = model_n(betas=pose_output.pred_shape.detach().cpu(), global_orient=global_orient.detach().cpu(), body_pose=body_pose.detach().cpu(), transl=pose_output.transl.detach().cpu())
+        
+        # model_n = smplx.create("model_files/basicModel_neutral_lbs_10_207_0_v1.0.0.pkl", model_type="smpl", gender="neutral")
+        
+        # output_n = model_n(betas=pose_output.pred_shape.detach().cpu(), global_orient=global_orient.detach().cpu(), body_pose=body_pose.detach().cpu(), transl=pose_output.transl.detach().cpu())
 
-        joints = output_n.joints[0, :24, :]
-        joints = joints.detach().cpu().numpy()
+        # joints = output_n.joints[0, :24, :]
+        # joints = joints.detach().cpu().numpy()
 
 
 def render_result_on_image(input_image, bbox, pose_output, uv_29, smpl_faces, transl, idx, opt, write_stream, write2d_stream, res_db, img_path, tight_bbox, pose_input):
