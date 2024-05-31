@@ -1,9 +1,0 @@
-source;share/smpl_fitter/hook/pythonpath.ps1
-source;share/smpl_fitter/hook/pythonpath.dsv
-source;share/smpl_fitter/hook/pythonpath.sh
-source;share/smpl_fitter/hook/ament_prefix_path.ps1
-source;share/smpl_fitter/hook/ament_prefix_path.dsv
-source;share/smpl_fitter/hook/ament_prefix_path.sh
-source;../../build/smpl_fitter/share/smpl_fitter/hook/pythonpath_develop.ps1
-source;../../build/smpl_fitter/share/smpl_fitter/hook/pythonpath_develop.dsv
-source;../../build/smpl_fitter/share/smpl_fitter/hook/pythonpath_develop.sh
